@@ -1,0 +1,126 @@
+<?xml version="1.0"?>
+<?xml-stylesheet href="chrome://imazoterosync/content/dashboard.css" type="text/css"?>
+<window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+        xmlns:html="http://www.w3.org/1999/xhtml"
+        id="ima-zotero-sync-dashboard-window"
+        title="IMA 同步控制台"
+        windowtype="ima-zotero-sync:dashboard"
+        width="1040" height="800"
+        persist="width height screenX screenY"
+        onload="IMAZoteroSyncDashboard.init(window)">
+
+  <html:div class="ima-dash">
+    <html:div class="dash-header">
+      <html:div class="dash-title">
+        <html:span class="logo">IMA</html:span>
+        <html:span>IMA 同步控制台</html:span>
+      </html:div>
+      <html:div class="tabbar">
+        <html:button id="tab-dashboard" class="tab active">📊 仪表盘</html:button>
+        <html:button id="tab-settings" class="tab">⚙ 设置</html:button>
+        <html:button id="btn-refresh" class="btn ghost">⟳ 刷新</html:button>
+      </html:div>
+    </html:div>
+
+    <!-- ============ 仪表盘 ============ -->
+    <html:div id="view-dashboard">
+      <html:div id="banner" class="banner muted">正在加载…</html:div>
+
+      <html:div class="cards">
+        <html:div class="card accent-blue">
+          <html:div class="card-label">总同步数</html:div>
+          <html:div id="stat-total" class="card-value">—</html:div>
+          <html:div class="card-foot">已打 IMA已上传 标签的文献</html:div>
+        </html:div>
+        <html:div class="card accent-green">
+          <html:div class="card-label">今日同步</html:div>
+          <html:div id="stat-today" class="card-value">—</html:div>
+          <html:div class="card-foot">今天成功同步的条目</html:div>
+        </html:div>
+        <html:div class="card accent-amber">
+          <html:div class="card-label">待同步</html:div>
+          <html:div id="stat-pending" class="card-value">—</html:div>
+          <html:div class="card-foot">有附件但未同步的文献</html:div>
+        </html:div>
+        <html:div class="card accent-purple">
+          <html:div class="card-label">成功率</html:div>
+          <html:div id="stat-rate" class="card-value">—</html:div>
+          <html:div class="card-foot">自新版安装后累计</html:div>
+        </html:div>
+        <html:div class="card accent-teal">
+          <html:div class="card-label">平均用时</html:div>
+          <html:div id="stat-avg" class="card-value">—</html:div>
+          <html:div class="card-foot">每条成功同步耗时</html:div>
+        </html:div>
+        <html:div class="card accent-red">
+          <html:div class="card-label">失败数</html:div>
+          <html:div id="stat-failed" class="card-value">—</html:div>
+          <html:div class="card-foot">累计同步失败次数</html:div>
+        </html:div>
+      </html:div>
+
+      <html:div class="section-title">⚡ 快捷操作</html:div>
+      <html:div class="actions">
+        <html:button id="act-sync" class="btn primary">🔄 同步所选文献</html:button>
+        <html:button id="act-dryrun" class="btn">👁 预演所选文献</html:button>
+        <html:button id="act-syncall" class="btn">📚 同步全部待同步</html:button>
+        <html:button id="act-target" class="btn">📁 去设置默认目标</html:button>
+        <html:button id="act-cred" class="btn">🔑 去设置 IMA 凭据</html:button>
+        <html:button id="act-diag" class="btn">🩺 运行诊断</html:button>
+      </html:div>
+
+      <html:div class="section-title">🕑 最近活动</html:div>
+      <html:div id="activity" class="activity">
+        <html:div class="activity-empty">暂无同步记录。</html:div>
+      </html:div>
+    </html:div>
+
+    <!-- ============ 设置 ============ -->
+    <html:div id="view-settings" style="display:none">
+      <html:div class="section-card">
+        <html:div class="section-head">🔑 IMA OpenAPI 凭据</html:div>
+        <html:div class="form-row">
+          <html:label class="form-label">Client ID</html:label>
+          <html:input id="set-client-id" class="form-input" type="text" autocomplete="off"/>
+        </html:div>
+        <html:div class="form-row">
+          <html:label class="form-label">API Key</html:label>
+          <html:input id="set-api-key" class="form-input" type="password" autocomplete="off"/>
+        </html:div>
+        <html:div class="form-actions">
+          <html:button id="set-save-cred" class="btn primary">保存凭据</html:button>
+          <html:button id="set-test-cred" class="btn">测试连接</html:button>
+        </html:div>
+        <html:div class="form-hint">留空时插件也会尝试读取 ~/.config/ima/client_id 与 api_key。</html:div>
+      </html:div>
+
+      <html:div class="section-card">
+        <html:div class="section-head">📚 默认知识库</html:div>
+        <html:div class="form-actions">
+          <html:button id="set-load-kbs" class="btn">加载可写入知识库</html:button>
+        </html:div>
+        <html:select id="set-kb-select" class="list-box" size="6"></html:select>
+      </html:div>
+
+      <html:div class="section-card">
+        <html:div class="section-head">📁 默认文件夹</html:div>
+        <html:div class="form-actions">
+          <html:button id="set-browse-folders" class="btn">浏览所选知识库的文件夹</html:button>
+          <html:button id="set-folder-up" class="btn">返回上一级</html:button>
+        </html:div>
+        <html:div id="set-folder-path" class="breadcrumb">当前位置：根目录</html:div>
+        <html:select id="set-folder-select" class="list-box" size="6"></html:select>
+        <html:div class="form-actions">
+          <html:button id="set-folder-open" class="btn">打开所选文件夹</html:button>
+          <html:button id="set-folder-default" class="btn primary">设为默认文件夹</html:button>
+          <html:button id="set-folder-root" class="btn">默认用根目录</html:button>
+        </html:div>
+        <html:div class="form-hint">先选知识库 → 浏览文件夹 → 双击或「打开所选文件夹」进入下一级 → 「设为默认文件夹」保存。不设置则默认上传到根目录。</html:div>
+      </html:div>
+    </html:div>
+
+    <html:div id="dash-status" class="dash-status"></html:div>
+  </html:div>
+
+  <html:script src="chrome://imazoterosync/content/dashboard.js"/>
+</window>

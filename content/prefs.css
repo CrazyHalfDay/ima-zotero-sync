@@ -1,0 +1,37 @@
+.ima-prefs {
+  max-width: 760px;
+  padding: 12px;
+}
+
+.ima-prefs h2 {
+  margin: 0 0 12px;
+}
+
+.ima-prefs groupbox {
+  margin-bottom: 12px;
+}
+
+.ima-prefs input,
+.ima-prefs select {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.ima-prefs select {
+  min-height: 160px;
+}
+
+.ima-actions {
+  gap: 8px;
+  margin: 8px 0;
+}
+
+#ima-folder-path {
+  margin: 4px 0;
+  font-weight: 600;
+}
+
+#ima-settings-status {
+  min-height: 48px;
+  white-space: pre-wrap;
+}

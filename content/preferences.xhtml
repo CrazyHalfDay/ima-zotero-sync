@@ -1,0 +1,86 @@
+<vbox id="ima-zotero-sync-preferences" xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul" xmlns:html="http://www.w3.org/1999/xhtml" onload="Zotero.IMAZoteroSync.onPrefsEvent('load', { window: this.ownerDocument.defaultView })">
+  <linkset>
+    <html:link rel="localization" href="ima-zotero-sync.ftl"/>
+  </linkset>
+  <html:div class="ima-prefs">
+    <html:h2>IMA Zotero 同步</html:h2>
+
+    <hbox class="ima-actions">
+      <button id="ima-open-dashboard" label="📊 打开 IMA 同步控制台"/>
+    </hbox>
+
+    <groupbox>
+      <caption label="IMA OpenAPI 凭据"/>
+      <grid>
+        <columns>
+          <column/>
+          <column flex="1"/>
+        </columns>
+        <rows>
+          <row align="center">
+            <label value="Client ID"/>
+            <html:input id="ima-client-id" type="text" autocomplete="off"/>
+          </row>
+          <row align="center">
+            <label value="API Key"/>
+            <html:input id="ima-api-key" type="password" autocomplete="off"/>
+          </row>
+        </rows>
+      </grid>
+      <hbox class="ima-actions">
+        <button id="ima-save-credentials" label="保存凭据"/>
+        <button id="ima-test-credentials" label="测试连接"/>
+      </hbox>
+      <description>
+        如果这里留空，插件也会读取 C:\Users\zhaox\.config\ima\client_id 和 api_key。
+      </description>
+    </groupbox>
+
+    <groupbox>
+      <caption label="知识库"/>
+      <hbox class="ima-actions">
+        <button id="ima-load-writable-kbs" label="加载可写入知识库"/>
+        <button id="ima-load-visible-kbs" label="加载可见/共享知识库"/>
+      </hbox>
+      <html:select id="ima-kb-select" size="8"></html:select>
+      <hbox class="ima-actions">
+        <button id="ima-save-default-kb" label="设为默认同步目标"/>
+      </hbox>
+      <description>
+        只有可写入知识库能作为同步目标。可见/共享知识库仅用于查看；共享知识库仍需要写入权限才能同步。
+      </description>
+    </groupbox>
+
+    <groupbox>
+      <caption label="目标文件夹（可选）"/>
+      <hbox class="ima-actions">
+        <button id="ima-load-folders" label="浏览所选知识库的文件夹"/>
+        <button id="ima-folder-up" label="返回上一级"/>
+      </hbox>
+      <label id="ima-folder-path" value="当前位置：根目录"/>
+      <html:select id="ima-folder-select" size="8"></html:select>
+      <hbox class="ima-actions">
+        <button id="ima-folder-open" label="打开所选文件夹"/>
+        <button id="ima-folder-set-default" label="设为默认文件夹"/>
+        <button id="ima-folder-set-root" label="默认用根目录"/>
+      </hbox>
+      <description>
+        先在上方选中一个知识库，再点「浏览所选知识库的文件夹」。双击文件夹或用「打开所选文件夹」可进入下一级；「设为默认文件夹」会把当前选中的文件夹（未选中时为当前所在层级）连同其所属知识库一起设为默认同步目标。不设置则默认上传到知识库根目录。
+      </description>
+    </groupbox>
+
+    <groupbox>
+      <caption label="所选 Zotero 文献"/>
+      <hbox class="ima-actions">
+        <button id="ima-dry-run-selected" label="预演同步所选文献"/>
+        <button id="ima-sync-selected-default" label="同步到默认目标"/>
+        <button id="ima-sync-selected-chosen" label="同步到指定目标..."/>
+      </hbox>
+      <description>
+        请在 Zotero 主文献库中选择一个或多个文献父条目。同步只上传本地附件，例如 PDF，不上传额外的元数据 Markdown。
+      </description>
+    </groupbox>
+
+    <html:pre id="ima-settings-status"></html:pre>
+  </html:div>
+</vbox>
