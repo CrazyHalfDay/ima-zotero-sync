@@ -3,6 +3,10 @@
   "name": "IMA Zotero 同步",
   "version": "0.2.28",
   "description": "将 Zotero 文献附件同步到 IMA 知识库，并避免重复上传。",
+  "icons": {
+    "48": "content/icons/icon.png",
+    "96": "content/icons/icon@2x.png"
+  },
   "homepage_url": "https://github.com/zotero/zotero",
   "author": "Codex",
   "applications": {
