@@ -1,0 +1,57 @@
+name: Release
+
+# 推送 v* 标签时自动构建并发布；也可在 Actions 页手动触发(workflow_dispatch)。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from manifest
+        id: meta
+        run: |
+          VERSION=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "manifest version = $VERSION"
+
+      - name: Verify pushed tag matches manifest version
+        if: github.ref_type == 'tag'
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${{ steps.meta.outputs.version }}" != "$TAG_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION 与 manifest.json 版本 ${{ steps.meta.outputs.version }} 不一致"
+            exit 1
+          fi
+
+      - name: Build XPI
+        run: |
+          chmod +x scripts/build-xpi.sh
+          ./scripts/build-xpi.sh build/ima-zotero-sync.xpi
+
+      - name: Generate update.json
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          XPI_NAME: ima-zotero-sync.xpi
+        run: python3 scripts/gen-update-json.py build/update.json
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          files: |
+            build/ima-zotero-sync.xpi
+            build/update.json
+          fail_on_unmatched_files: true
+          generate_release_notes: true
