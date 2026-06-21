@@ -28,6 +28,10 @@
 
 升级时直接安装新版 `.xpi` 覆盖即可，无需先卸载。
 
+> 💡 **自动更新**：插件已接入 GitHub Releases 自动更新。装好后，Zotero 会定期检查
+> [本仓库的最新 Release](https://github.com/CrazyHalfDay/ima-zotero-sync/releases/latest)，
+> 发现新版本时在「工具 → 插件」里提示并自动升级。也可在插件列表里手动「检查更新」。
+
 ---
 
 ## 🚀 快速开始
@@ -159,6 +163,38 @@ $zip.Dispose()
 
 > 注意：ZIP 内的路径必须用正斜杠 `/`，且 `manifest.json` 必须在压缩包根目录，否则 Zotero 无法识别。
 
+跨平台脚本（Linux/macOS，需 `zip`）：
+
+```bash
+scripts/build-xpi.sh build/ima-zotero-sync.xpi
+```
+
+---
+
+## 🚀 发布与自动更新（维护者）
+
+自动更新基于 Zotero 的 `update_url` 机制 + GitHub Releases，全流程由 GitHub Actions 完成。
+
+**工作原理**
+
+- `manifest.json` 的 `update_url` 指向
+  `https://github.com/CrazyHalfDay/ima-zotero-sync/releases/latest/download/update.json`
+  （`releases/latest/download/` 永远解析到最新 Release 的同名资源）。
+- 每次发布时，Actions 会生成 `update.json`（列出最新版本号与对应 `.xpi` 下载地址）
+  和打包好的 `.xpi`，一起作为 Release 资源上传。
+- Zotero 读取 `update.json`，比对版本，提示并下载新版 `.xpi`。
+
+**发布一个新版本**
+
+1. 改 `manifest.json` 里的 `version`（如 `0.2.29`），提交到 `main`。
+2. 到仓库 **Actions → Release → Run workflow** 点一下按钮。
+3. 工作流自动执行：读取 manifest 版本 → 打包 `.xpi` → 生成 `update.json`
+   → 创建（或更新）标签 `v0.2.29` 对应的 Release 并上传两者。
+4. 已安装用户随后会自动收到更新提示。
+
+> 工作流仅手动触发（`workflow_dispatch`），按 `manifest.json` 当前版本号发布；
+> 使用默认的 `GITHUB_TOKEN`（已通过 `permissions: contents: write` 授权），无需额外密钥。
+
 ---
 
 ## 📁 项目结构
@@ -172,7 +208,12 @@ content/
   dashboard.xhtml / .js / .css    同步控制台窗口（仪表盘 + 设置）
   preferences.xhtml / .js         Zotero 设置页
   prefs.css                       设置页样式
+  icons/icon.png / icon@2x.png    插件图标（48 / 96 px）
 locale/en-US/ima-zotero-sync.ftl  本地化文案
+scripts/
+  build-xpi.sh                    打包 .xpi
+  gen-update-json.py              从 manifest 生成 update.json
+.github/workflows/release.yml     打标签自动构建 + 发布 + 自动更新
 ```
 
 ---

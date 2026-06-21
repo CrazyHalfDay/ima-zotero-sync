@@ -1,0 +1,3 @@
+build/
+*.xpi
+.DS_Store
