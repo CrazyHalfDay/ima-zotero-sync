@@ -1,10 +1,8 @@
 name: Release
 
-# 推送 v* 标签时自动构建并发布；也可在 Actions 页手动触发(workflow_dispatch)。
+# 手动触发：在仓库 Actions → Release → Run workflow 点一下，
+# 按 manifest.json 当前版本号打包并发布到 Release。
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -24,15 +22,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "manifest version = $VERSION"
-
-      - name: Verify pushed tag matches manifest version
-        if: github.ref_type == 'tag'
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          if [ "${{ steps.meta.outputs.version }}" != "$TAG_VERSION" ]; then
-            echo "::error::Tag v$TAG_VERSION 与 manifest.json 版本 ${{ steps.meta.outputs.version }} 不一致"
-            exit 1
-          fi
 
       - name: Build XPI
         run: |

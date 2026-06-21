@@ -187,19 +187,13 @@ scripts/build-xpi.sh build/ima-zotero-sync.xpi
 **发布一个新版本**
 
 1. 改 `manifest.json` 里的 `version`（如 `0.2.29`），提交到 `main`。
-2. 打同名标签并推送（标签必须是 `v` + 版本号，与 manifest 一致）：
-
-   ```bash
-   git tag v0.2.29
-   git push origin v0.2.29
-   ```
-
-3. `.github/workflows/release.yml` 自动触发：校验标签与版本一致 → 打包 `.xpi`
-   → 生成 `update.json` → 创建 Release 并上传两者。
+2. 到仓库 **Actions → Release → Run workflow** 点一下按钮。
+3. 工作流自动执行：读取 manifest 版本 → 打包 `.xpi` → 生成 `update.json`
+   → 创建（或更新）标签 `v0.2.29` 对应的 Release 并上传两者。
 4. 已安装用户随后会自动收到更新提示。
 
-> 也可在仓库 **Actions → Release → Run workflow** 手动触发（按 manifest 当前版本发布）。
-> 工作流需要默认的 `GITHUB_TOKEN`（已通过 `permissions: contents: write` 授权），无需额外密钥。
+> 工作流仅手动触发（`workflow_dispatch`），按 `manifest.json` 当前版本号发布；
+> 使用默认的 `GITHUB_TOKEN`（已通过 `permissions: contents: write` 授权），无需额外密钥。
 
 ---
 
