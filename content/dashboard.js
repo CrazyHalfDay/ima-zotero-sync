@@ -208,11 +208,14 @@ var IMAZoteroSyncDashboard = {
     if (key) key.value = this.prefGet("apiKey");
   },
 
+  // 只在输入框有值时回写 prefs：清空输入框不应把已保存的凭据（或 ~/.config/ima 下的文件凭据）覆盖掉。
   persistCredsFromInputs() {
     const cid = this.doc.getElementById("set-client-id");
     const key = this.doc.getElementById("set-api-key");
-    if (cid) this.prefSet("clientId", (cid.value || "").trim());
-    if (key) this.prefSet("apiKey", (key.value || "").trim());
+    const clientId = cid ? (cid.value || "").trim() : "";
+    const apiKey = key ? (key.value || "").trim() : "";
+    if (clientId) this.prefSet("clientId", clientId);
+    if (apiKey) this.prefSet("apiKey", apiKey);
   },
 
   saveCredentials() {
@@ -397,7 +400,6 @@ var IMAZoteroSyncDashboard = {
       {
         unchanged: "未变化",
         exists: "远端已存在",
-        "sync already running": "同步进行中",
         "no supported local attachments": "无可上传附件",
         "not a regular item": "非普通条目",
       }[reason] || reason
