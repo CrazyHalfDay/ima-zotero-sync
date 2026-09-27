@@ -11,12 +11,12 @@ mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 
 # 打进 .xpi 的文件（运行时需要的才放进去）
+# 注意：locale 已随失效的 MenuManager 菜单一起移除，bootstrap.js 也从未注册过 locale。
 INCLUDE=(
   manifest.json
   bootstrap.js
   prefs.js
   content
-  locale
 )
 
 # 排除：源图、说明文件等运行时用不到的东西，控制体积

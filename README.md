@@ -141,7 +141,6 @@ manifest.json
 bootstrap.js
 prefs.js
 content/
-locale/
 ```
 
 PowerShell 示例：
@@ -152,7 +151,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $src = "$PWD"
 $out = "$PWD\ima-zotero-sync.xpi"
 $bs = [char]92; $fs = [char]47
-$files = Get-ChildItem -Recurse -File -Path manifest.json,bootstrap.js,prefs.js,content,locale
+$files = Get-ChildItem -Recurse -File -Path manifest.json,bootstrap.js,prefs.js,content
 $zip = [System.IO.Compression.ZipFile]::Open($out, [System.IO.Compression.ZipArchiveMode]::Create)
 foreach ($f in $files) {
   $rel = ($f.FullName.Substring($src.Length + 1)).Replace($bs, $fs)
@@ -209,7 +208,6 @@ content/
   preferences.xhtml / .js         Zotero 设置页
   prefs.css                       设置页样式
   icons/icon.png / icon@2x.png    插件图标（48 / 96 px）
-locale/en-US/ima-zotero-sync.ftl  本地化文案
 scripts/
   build-xpi.sh                    打包 .xpi
   gen-update-json.py              从 manifest 生成 update.json

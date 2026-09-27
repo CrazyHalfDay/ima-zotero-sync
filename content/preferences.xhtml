@@ -1,7 +1,4 @@
 <vbox id="ima-zotero-sync-preferences" xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul" xmlns:html="http://www.w3.org/1999/xhtml" onload="Zotero.IMAZoteroSync.onPrefsEvent('load', { window: this.ownerDocument.defaultView })">
-  <linkset>
-    <html:link rel="localization" href="ima-zotero-sync.ftl"/>
-  </linkset>
   <html:div class="ima-prefs">
     <html:h2>IMA Zotero 同步</html:h2>
 
@@ -32,7 +29,7 @@
         <button id="ima-test-credentials" label="测试连接"/>
       </hbox>
       <description>
-        如果这里留空，插件也会读取 C:\Users\zhaox\.config\ima\client_id 和 api_key。
+        如果这里留空，插件也会读取用户主目录下的 .config/ima/client_id 与 api_key 文件。
       </description>
     </groupbox>
 
