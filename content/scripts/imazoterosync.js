@@ -39,12 +39,20 @@ var IMAZoteroSync;
     wav: { mediaType: 15, contentType: "audio/wav", maxBytes: 200 * 1024 * 1024 },
   };
 
-  let registeredMenus = [];
+  const KB_LIST_LIMIT = 20;
+  const FOLDER_PAGE_SIZE = 50;
+  const MAX_FOLDER_PAGES = 20;
+  const DIAG_SAMPLE_LIMIT = 12;
+
   let preferencePaneRegistered = false;
-  let legacyMenusEnabled = true;
   let currentWindow = null;
   let addonRootURI = "";
-  const activeSyncKeys = new Set();
+  let pluginVersion = "";
+
+  // 上报给 IMA 的 skill_version：优先插件真实版本，缺失时用常量兜底。
+  function skillVersion() {
+    return pluginVersion ? `zotero-plugin-${pluginVersion}` : IMA_SKILL_VERSION_FALLBACK;
+  }
 
   function prefGet(name, fallback = "") {
     try {
@@ -1188,20 +1196,6 @@ var IMAZoteroSync;
     await dryRunSelectedItems(win, options);
   }
 
-  async function syncMenuManagerContext(context, event, options = {}) {
-    const win =
-      (event && event.target && event.target.ownerGlobal) ||
-      (context && context.window) ||
-      currentWindow ||
-      Services.wm.getMostRecentWindow("navigator:browser");
-    const items = context && context.items ? Array.from(context.items) : selectedItemsFromWindow(win);
-    if (options.dryRun) {
-      await dryRunItems(items, win, options);
-    } else {
-      await syncItems(items, win, options);
-    }
-  }
-
   async function configureCredentials() {
     const clientId = promptUser("IMA Zotero 同步", "IMA Client ID：", prefGet("clientId"));
     if (!clientId) return;
@@ -1243,7 +1237,7 @@ var IMAZoteroSync;
           `可写入知识库：${bases.length}`,
           `默认知识库：${defaultName}`,
           `默认文件夹：${defaultFolder}`,
-          `菜单模式：${legacyMenusEnabled ? "传统 XUL 备用菜单" : "Zotero MenuManager"}`,
+          "菜单模式：静态 XUL 注入",
         ].join("\n"),
       );
     } catch (err) {
@@ -1271,118 +1265,6 @@ var IMAZoteroSync;
       if (node) return node;
     }
     return null;
-  }
-
-  async function registerOneMenu(definition) {
-    const id = Zotero.MenuManager.registerMenu(definition);
-    return id && typeof id.then === "function" ? await id : id;
-  }
-
-  function buildSyncMenuEntries() {
-    return [
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-dry-run",
-        label: "预演同步所选文献",
-        onCommand: (event, context) => syncMenuManagerContext(context, event, { forcePrompt: true, dryRun: true }),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-sync-default",
-        label: "同步所选文献到默认知识库",
-        onCommand: (event, context) => syncMenuManagerContext(context, event),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-sync-chosen",
-        label: "同步所选文献到指定知识库...",
-        onCommand: (event, context) => syncMenuManagerContext(context, event, { forcePrompt: true }),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-default-kb",
-        label: "选择默认 IMA 知识库",
-        onCommand: () => configureTargetKnowledgeBase(),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-credentials",
-        label: "配置 IMA 凭据",
-        onCommand: () => configureCredentials(),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-diagnostics",
-        label: "运行诊断",
-        onCommand: () => runDiagnostics(),
-      },
-    ];
-  }
-
-  async function registerMenuManagerMenus() {
-    if (!Zotero.MenuManager || !Zotero.MenuManager.registerMenu) {
-      return false;
-    }
-    try {
-      registeredMenus.push(
-        await registerOneMenu({
-          menuID: "ima-zotero-sync-tools-menu",
-          pluginID: PLUGIN_ID,
-          target: "main/menubar/tools",
-          menus: [
-            {
-              menuType: "submenu",
-              l10nID: "ima-zotero-sync-menu-root",
-              label: "IMA Zotero 同步",
-              menus: buildSyncMenuEntries(),
-            },
-          ],
-        }),
-      );
-
-      registeredMenus.push(
-        await registerOneMenu({
-          menuID: "ima-zotero-sync-item-menu",
-          pluginID: PLUGIN_ID,
-          target: "main/library/item",
-          menus: [
-            {
-              menuType: "submenu",
-              l10nID: "ima-zotero-sync-menu-root",
-              label: "IMA Zotero 同步",
-              menus: buildSyncMenuEntries(),
-            },
-          ],
-        }),
-      );
-
-      // MenuManager 管理菜单生命周期；此时必须关闭传统 XUL 菜单，
-      // 否则静态节点与 MenuManager 动态节点的 ID 冲突会破坏右键 popup
-      // （表现为右键只弹出一次，之后无法再弹出）。
-      legacyMenusEnabled = false;
-      Zotero.debug("IMA Zotero Sync: registered menus via Zotero.MenuManager");
-      return true;
-    } catch (err) {
-      unregisterMenuManagerMenus();
-      legacyMenusEnabled = true;
-      Zotero.debug(`IMA Zotero Sync: MenuManager registration failed, using legacy menus: ${err.stack || err.message}`);
-      return false;
-    }
-  }
-
-  function unregisterMenuManagerMenus() {
-    if (!Zotero.MenuManager || !Zotero.MenuManager.unregisterMenu) {
-      registeredMenus = [];
-      return;
-    }
-    for (const id of registeredMenus) {
-      try {
-        Zotero.MenuManager.unregisterMenu(id);
-      } catch (err) {
-        Zotero.debug(`IMA Zotero Sync: failed to unregister menu ${id}: ${err.message}`);
-      }
-    }
-    registeredMenus = [];
   }
 
   function registerPreferencePane(rootURI) {
@@ -1522,17 +1404,16 @@ var IMAZoteroSync;
   IMAZoteroSync = {
     async startup(data = {}) {
       addonRootURI = data.rootURI || "";
+      pluginVersion = data.version || "";
       Zotero.IMAZoteroSync = IMAZoteroSync;
       registerPreferencePane(data.rootURI || "");
-      // 统一使用静态 XUL 注入 + popupshowing 监听。
+      // 菜单统一走静态 XUL 注入 + popupshowing 幂等监听。
       // Zotero 9 的 MenuManager 在条目右键菜单上会出现空白项，且右键
       // 仅能弹出一次（拆除阶段异常导致 popup 卡死），故不再使用。
-      legacyMenusEnabled = true;
       addMenusToOpenWindows();
     },
     async shutdown() {
       unregisterPreferencePane();
-      unregisterMenuManagerMenus();
       for (const win of getMainWindows()) removeMenus(win);
       if (Zotero.IMAZoteroSync === IMAZoteroSync) {
         delete Zotero.IMAZoteroSync;
@@ -1559,7 +1440,7 @@ var IMAZoteroSync;
     },
     onMainWindowLoad({ window }) {
       currentWindow = window;
-      if (legacyMenusEnabled) scheduleMenuInstall(window);
+      scheduleMenuInstall(window);
     },
     onMainWindowUnload({ window }) {
       removeMenus(window);
