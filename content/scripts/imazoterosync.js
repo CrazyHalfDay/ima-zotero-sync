@@ -775,53 +775,58 @@ var IMAZoteroSync;
       return { status: "skipped", title: item ? item.getField("title") : "", reason: "not a regular item" };
     }
     const payload = await itemPayload(item);
-    const syncKey = `${kb.id}:${payload.libraryID}:${payload.itemKey}:${payload.syncHash}`;
-    if (activeSyncKeys.has(syncKey)) {
-      return { status: "skipped", title: payload.title || item.key, reason: "sync already running" };
-    }
-    activeSyncKeys.add(syncKey);
-    try {
-      const existing = findSyncRecord(item, kb.id);
-      if (existing && existing.syncHash === payload.syncHash) {
-        await addSyncTag(item);
-        return { status: "skipped", title: payload.title || item.key, reason: "unchanged" };
-      }
-
-      const files = await getAttachmentFiles(item);
-      if (!files.length) {
-        return { status: "skipped", title: payload.title || item.key, reason: "no supported local attachments" };
-      }
-
-      const uploaded = [];
-      for (const file of files) {
-        uploaded.push(await uploadFileToKnowledgeBase(file, kb.id, kb.folderId));
-      }
-
-      await writeSyncRecord(item, {
-        kbId: kb.id,
-        kbName: kb.name,
-        folderId: kb.folderId || "",
-        folderName: kb.folderName || "",
-        syncHash: payload.syncHash,
-        syncedAt: new Date().toISOString(),
-        uploadedFiles: uploaded.map((u) => ({ fileName: u.fileName, mediaId: u.mediaId || "", skipped: !!u.skipped })),
-      });
+    const existing = findSyncRecord(item, kb.id);
+    if (existing && existing.syncHash === payload.syncHash) {
       await addSyncTag(item);
-
-      return { status: "synced", title: payload.title || item.key, uploaded };
-    } finally {
-      activeSyncKeys.delete(syncKey);
+      return { status: "skipped", title: payload.title || item.key, reason: "unchanged" };
     }
+
+    const files = await getAttachmentFiles(item);
+    if (!files.length) {
+      return { status: "skipped", title: payload.title || item.key, reason: "no supported local attachments" };
+    }
+
+    const uploaded = [];
+    for (const file of files) {
+      uploaded.push(await uploadFileToKnowledgeBase(file, kb.id, kb.folderId));
+    }
+
+    await writeSyncRecord(item, {
+      kbId: kb.id,
+      kbName: kb.name,
+      folderId: kb.folderId || "",
+      folderName: kb.folderName || "",
+      syncHash: payload.syncHash,
+      syncedAt: new Date().toISOString(),
+      uploadedFiles: uploaded.map((u) => ({ fileName: u.fileName, mediaId: u.mediaId || "", skipped: !!u.skipped })),
+    });
+    await addSyncTag(item);
+
+    return { status: "synced", title: payload.title || item.key, uploaded };
   }
 
+  // IMA 各接口返回的知识库字段名不统一，统一在这里收敛成 { id, name, type, contentCount }。
+  function normalizeKnowledgeBases(data) {
+    return extractKnowledgeBases(data)
+      .map((kb) => ({
+        id: kb.kb_id || kb.id || kb.knowledge_base_id || kb.knowledgeBaseId || kb.base_id || kb.baseId,
+        name: kb.kb_name || kb.name || kb.title || kb.knowledge_base_name || kb.knowledgeBaseName || kb.base_name || kb.baseName || "未命名知识库",
+        type: kb.base_type || kb.type || kb.knowledge_base_type || kb.knowledgeBaseType || "",
+        contentCount: kb.content_count || kb.contentCount || kb.doc_count || kb.docCount || kb.knowledge_count || kb.knowledgeCount || "",
+      }))
+      .filter((kb) => kb.id);
+  }
+
+  // 可写入的知识库（唯一能作为同步目标的集合）。
   async function listAddableKnowledgeBases() {
-    const data = await imaPost("openapi/wiki/v1/get_addable_knowledge_base_list", { cursor: "", limit: 20 });
-    const list = extractKnowledgeBases(data);
-    return list.map((kb) => ({
-      id: kb.kb_id || kb.id || kb.knowledge_base_id || kb.knowledgeBaseId || kb.base_id || kb.baseId,
-      name: kb.kb_name || kb.name || kb.title || kb.knowledge_base_name || kb.knowledgeBaseName || kb.base_name || kb.baseName || "未命名知识库",
-      type: kb.base_type || kb.type || kb.knowledge_base_type || kb.knowledgeBaseType || "",
-    })).filter((kb) => kb.id);
+    const data = await imaPost("openapi/wiki/v1/get_addable_knowledge_base_list", { cursor: "", limit: KB_LIST_LIMIT });
+    return normalizeKnowledgeBases(data);
+  }
+
+  // 可见/共享的知识库（prefs 页用于查看，同步仍需写入权限）。
+  async function listVisibleKnowledgeBases() {
+    const data = await imaPost("openapi/wiki/v1/search_knowledge_base", { query: "", cursor: "", limit: KB_LIST_LIMIT });
+    return normalizeKnowledgeBases(data);
   }
 
   function extractKnowledgeBases(data) {
@@ -1180,7 +1185,6 @@ var IMAZoteroSync;
       {
         unchanged: "未变化",
         exists: "远端已存在",
-        "sync already running": "同步正在运行",
         "no supported local attachments": "没有可上传的本地附件",
         "not a regular item": "不是普通文献条目",
       }[reason] || reason
