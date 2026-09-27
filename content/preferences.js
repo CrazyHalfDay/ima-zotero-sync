@@ -1,7 +1,5 @@
 var IMAZoteroSyncPrefs = {
   PREF: "extensions.imaZoteroSync.",
-  BASE_URL: "https://ima.qq.com",
-  SKILL_VERSION: "zotero-plugin-prefs-0.2.14",
   initialized: false,
 
   init() {
@@ -42,15 +40,39 @@ var IMAZoteroSyncPrefs = {
       this.folderSelect.addEventListener("dblclick", () => this.openSelectedFolder());
     }
 
-    const defaultName = this.prefGet("targetKbName");
-    const defaultFolder = this.prefGet("targetFolderName");
     this.updateFolderPathLabel();
     this.initialized = true;
+
+    if (!this.bridge()) {
+      this.setStatus("插件命令桥不可用，请重启 Zotero 后再试。");
+      return;
+    }
+
+    const defaultName = this.prefGet("targetKbName");
+    const defaultFolder = this.prefGet("targetFolderName");
     if (defaultName) {
       this.setStatus(`默认同步目标：${defaultName}${defaultFolder && defaultFolder !== "（根目录）" ? ` / ${defaultFolder}` : "（根目录）"}`);
     } else {
       this.setStatus("尚未选择默认 IMA 知识库。");
     }
+  },
+
+  // 所有 IMA 请求统一经主插件脚本暴露的命令桥发出，本页不再自己发请求。
+  bridge() {
+    try {
+      return Zotero && Zotero.IMAZoteroSync ? Zotero.IMAZoteroSync : null;
+    } catch (err) {
+      return null;
+    }
+  },
+
+  requireBridge() {
+    const bridge = this.bridge();
+    if (!bridge) {
+      this.setStatus("插件命令桥不可用，请重启 Zotero 后再试。");
+      return null;
+    }
+    return bridge;
   },
 
   bindButton(id, handler) {
@@ -92,13 +114,15 @@ var IMAZoteroSyncPrefs = {
   },
 
   setStatus(text) {
-    this.status.textContent = text;
+    if (this.status) this.status.textContent = text;
   },
 
   openDashboard() {
+    const bridge = this.requireBridge();
+    if (!bridge) return;
     try {
-      if (Zotero.IMAZoteroSync && typeof Zotero.IMAZoteroSync.openDashboard === "function") {
-        Zotero.IMAZoteroSync.openDashboard();
+      if (typeof bridge.openDashboard === "function") {
+        bridge.openDashboard();
         this.setStatus("已打开 IMA 同步控制台。");
       } else {
         this.setStatus("控制台不可用，请重启 Zotero 后再试。");
@@ -114,82 +138,16 @@ var IMAZoteroSyncPrefs = {
     this.setStatus("IMA 凭据已保存到 Zotero 设置。");
   },
 
-  credentials() {
-    const clientId = this.clientIdInput.value.trim() || this.prefGet("clientId");
-    const apiKey = this.apiKeyInput.value.trim() || this.prefGet("apiKey");
-    if (!clientId || !apiKey) {
-      throw new Error("需要填写 IMA Client ID 和 API Key。");
-    }
-    return { clientId, apiKey };
-  },
-
-  async imaPost(apiPath, body) {
-    const { clientId, apiKey } = this.credentials();
-    const response = await fetch(`${this.BASE_URL}/${apiPath}`, {
-      method: "POST",
-      headers: {
-        "ima-openapi-clientid": clientId,
-        "ima-openapi-apikey": apiKey,
-        "ima-openapi-ctx": `skill_version=${this.SKILL_VERSION}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body || {}),
-    });
-    const text = await response.text();
-    let json;
-    try {
-      json = JSON.parse(text || "{}");
-    } catch (err) {
-      throw new Error(`IMA returned non-JSON response from ${apiPath}`);
-    }
-    if (json.code !== 0) {
-      throw new Error(json.msg || `IMA API failed: ${apiPath}`);
-    }
-    return json.data || {};
-  },
-
   async testCredentials() {
+    const bridge = this.requireBridge();
+    if (!bridge) return;
     try {
       this.saveCredentials();
-      const data = await this.imaPost("openapi/wiki/v1/get_addable_knowledge_base_list", { cursor: "", limit: 1 });
-      const count = this.extractKnowledgeBases(data).length;
-      this.setStatus(`IMA 连接正常。返回可写入知识库：${count} 个。响应字段：${Object.keys(data).join(", ") || "无"}。`);
+      const res = await bridge.testConnection();
+      this.setStatus(`IMA 连接正常，可写入知识库：${res.count} 个。`);
     } catch (err) {
       this.setStatus(`连接失败：${err.message || err}`);
     }
-  },
-
-  normalizeKnowledgeBase(kb, source) {
-    return {
-      id: kb.kb_id || kb.id || kb.knowledge_base_id || kb.knowledgeBaseId || kb.base_id || kb.baseId || "",
-      name: kb.kb_name || kb.name || kb.title || kb.knowledge_base_name || kb.knowledgeBaseName || kb.base_name || kb.baseName || "未命名知识库",
-      type: kb.base_type || kb.type || kb.knowledge_base_type || kb.knowledgeBaseType || source,
-      contentCount: kb.content_count || kb.contentCount || kb.doc_count || kb.docCount || kb.knowledge_count || kb.knowledgeCount || "",
-      source,
-    };
-  },
-
-  extractKnowledgeBases(data) {
-    if (Array.isArray(data)) return data;
-    const candidates = [
-      data.info_list,
-      data.addable_knowledge_base_list,
-      data.addableKnowledgeBaseList,
-      data.knowledge_base_list,
-      data.knowledgeBaseList,
-      data.knowledge_bases,
-      data.knowledgeBases,
-      data.base_list,
-      data.baseList,
-      data.list,
-      data.items,
-      data.records,
-      data.results,
-      data.data && data.data.info_list,
-      data.data && data.data.list,
-      data.data && data.data.knowledge_base_list,
-    ];
-    return candidates.find((value) => Array.isArray(value)) || [];
   },
 
   renderKnowledgeBases(items, mode) {
@@ -200,7 +158,6 @@ var IMAZoteroSyncPrefs = {
       option.value = kb.id;
       option.dataset.name = kb.name;
       option.dataset.type = kb.type || "";
-      option.dataset.source = kb.source || mode;
       const details = [kb.type, kb.contentCount ? `${kb.contentCount} 个条目` : ""].filter(Boolean).join("，");
       option.textContent = details ? `${kb.name} [${details}]` : kb.name;
       this.kbSelect.appendChild(option);
@@ -209,14 +166,14 @@ var IMAZoteroSyncPrefs = {
   },
 
   async loadWritableKnowledgeBases() {
+    const bridge = this.requireBridge();
+    if (!bridge) return;
     try {
       this.saveCredentials();
-      const data = await this.imaPost("openapi/wiki/v1/get_addable_knowledge_base_list", { cursor: "", limit: 20 });
-      const rawItems = this.extractKnowledgeBases(data);
-      const items = rawItems.map((kb) => this.normalizeKnowledgeBase(kb, "可写入"));
+      const items = await bridge.listKnowledgeBases();
       this.renderKnowledgeBases(items, "可写入");
       if (!items.length) {
-        this.setStatus(`可写入：已加载 0 个知识库。响应字段：${Object.keys(data).join(", ") || "无"}。如果 addable_knowledge_base_list 为空，说明 IMA 没有返回此账号可写入的目标。`);
+        this.setStatus("可写入：已加载 0 个知识库。若该账号没有可写入目标，IMA 不会返回任何条目。");
       }
     } catch (err) {
       this.setStatus(`加载可写入知识库失败：${err.message || err}`);
@@ -224,14 +181,14 @@ var IMAZoteroSyncPrefs = {
   },
 
   async loadVisibleKnowledgeBases() {
+    const bridge = this.requireBridge();
+    if (!bridge) return;
     try {
       this.saveCredentials();
-      const data = await this.imaPost("openapi/wiki/v1/search_knowledge_base", { query: "", cursor: "", limit: 20 });
-      const rawItems = this.extractKnowledgeBases(data);
-      const items = rawItems.map((kb) => this.normalizeKnowledgeBase(kb, "可见/共享"));
+      const items = await bridge.listVisibleKnowledgeBases();
       this.renderKnowledgeBases(items, "可见/共享");
       if (!items.length) {
-        this.setStatus(`可见/共享：已加载 0 个知识库。响应字段：${Object.keys(data).join(", ") || "无"}。`);
+        this.setStatus("可见/共享：已加载 0 个知识库。");
       }
     } catch (err) {
       this.setStatus(`加载可见/共享知识库失败：${err.message || err}`);
@@ -260,46 +217,6 @@ var IMAZoteroSyncPrefs = {
     const savedName = this.prefGet("targetKbName");
     if (savedId) return { id: savedId, name: savedName || "默认知识库" };
     return null;
-  },
-
-  // IMA 把文件夹编码为 media_type=99 的条目，其 media_id 即作为 folder_id 使用；
-  // 兼容另一种可能：有独立 folder_id 且无 media_id。
-  isFolderItem(it) {
-    if (Number(it.media_type) === 99 || Number(it.mediaType) === 99) return true;
-    const fid = it.folder_id || it.folderId;
-    if (fid && !(it.media_id || it.mediaId)) return true;
-    return false;
-  },
-
-  folderIdOf(it) {
-    return String(it.folder_id || it.folderId || it.media_id || it.mediaId || "");
-  },
-
-  extractFolders(data) {
-    const lists = [
-      data.folder_list,
-      data.folderList,
-      data.folders,
-      data.knowledge_list,
-      data.list,
-      data.items,
-      data.data && data.data.folder_list,
-      data.data && data.data.knowledge_list,
-    ];
-    const seen = new Set();
-    const out = [];
-    for (const lst of lists) {
-      if (!Array.isArray(lst)) continue;
-      for (const it of lst) {
-        if (!this.isFolderItem(it)) continue;
-        const folderId = this.folderIdOf(it);
-        if (!folderId || seen.has(folderId)) continue;
-        const name = it.title || it.name || it.folder_name || it.folderName || "未命名文件夹";
-        seen.add(folderId);
-        out.push({ folderId, name: String(name) });
-      }
-    }
-    return out;
   },
 
   // 根目录的 folder_id 等于 knowledge_base_id；空栈表示在根目录。
@@ -333,44 +250,27 @@ var IMAZoteroSyncPrefs = {
     }
   },
 
-  firstArray(data, keys) {
-    for (const key of keys) {
-      if (Array.isArray(data[key])) return data[key];
-    }
-    if (data.data) {
-      for (const key of keys) {
-        if (Array.isArray(data.data[key])) return data.data[key];
-      }
-    }
-    return [];
-  },
-
-  async fetchFolders(kbId, folderId) {
-    const folders = [];
-    let cursor = "";
-    this._lastDiag = { keys: "无", rawCount: 0, sampleKeys: "无" };
-    for (let page = 0; page < 20; page++) {
-      const body = { cursor, limit: 50, knowledge_base_id: kbId };
-      if (folderId && folderId !== kbId) body.folder_id = folderId;
-      const data = await this.imaPost("openapi/wiki/v1/get_knowledge_list", body);
-      try {
-        Zotero.debug(`IMA Zotero Sync: get_knowledge_list raw = ${JSON.stringify(data)}`);
-      } catch (err) {}
-      this._lastDiag.keys = Object.keys(data).join(", ") || "无";
-      const rawList = this.firstArray(data, ["knowledge_list", "folder_list", "list", "items", "info_list", "records", "results"]);
-      if (rawList.length) {
-        this._lastDiag.rawCount += rawList.length;
-        if (this._lastDiag.sampleKeys === "无") this._lastDiag.sampleKeys = Object.keys(rawList[0] || {}).join(", ") || "无";
-        if (!this._lastDiag.items) this._lastDiag.items = rawList.slice(0, 12);
-      }
-      for (const folder of this.extractFolders(data)) folders.push(folder);
-      if (data.is_end || !data.next_cursor) break;
-      cursor = data.next_cursor;
-    }
-    return folders;
+  // 解析不到子文件夹时，展示主脚本带回的原始响应概要，便于排查 IMA 返回结构变化。
+  folderDiagnosticText(diag) {
+    const d = diag || { responseKeys: "无", rawItemCount: 0, sampleKeys: "无", items: [] };
+    const listing = (d.items || [])
+      .map((it, i) => {
+        const kind = Number(it.media_type) === 99 || Number(it.mediaType) === 99 ? "📁文件夹" : "📄文件";
+        const title = it.title || it.name || it.file_name || "(无标题)";
+        return `  ${i + 1}. [${kind} mt=${it.media_type !== undefined ? it.media_type : "?"}] ${title}`;
+      })
+      .join("\n");
+    return (
+      `该层级没有解析到子文件夹（${this.browseKbName} / ${this.currentBrowsePathName()}）。\n` +
+      `调试：返回字段=[${d.responseKeys}]，原始条目数=${d.rawItemCount}，首条字段=[${d.sampleKeys}]。\n` +
+      (listing ? `本层条目（前 ${(d.items || []).length} 条）：\n${listing}\n` : "") +
+      `若上面全是 📄文件、没有 📁文件夹，说明该知识库这一层确实没有子文件夹。`
+    );
   },
 
   async browseFolders(reset) {
+    const bridge = this.requireBridge();
+    if (!bridge) return;
     try {
       this.saveCredentials();
       if (reset) {
@@ -387,26 +287,13 @@ var IMAZoteroSyncPrefs = {
         this.setStatus("请先「浏览所选知识库的文件夹」。");
         return;
       }
-      const folders = await this.fetchFolders(this.browseKbId, this.currentBrowseFolderId());
-      this.renderFolders(folders);
+      const result = await bridge.listFoldersWithDiagnostics(this.browseKbId, this.currentBrowseFolderId());
+      this.renderFolders(result.folders);
       this.updateFolderPathLabel();
-      if (folders.length) {
-        this.setStatus(`已加载 ${folders.length} 个文件夹（${this.browseKbName} / ${this.currentBrowsePathName()}）。`);
+      if (result.folders.length) {
+        this.setStatus(`已加载 ${result.folders.length} 个文件夹（${this.browseKbName} / ${this.currentBrowsePathName()}）。`);
       } else {
-        const diag = this._lastDiag || { keys: "无", rawCount: 0, sampleKeys: "无", items: [] };
-        const listing = (diag.items || [])
-          .map((it, i) => {
-            const kind = this.isFolderItem(it) ? "📁文件夹" : "📄文件";
-            const title = it.title || it.name || it.file_name || "(无标题)";
-            return `  ${i + 1}. [${kind} mt=${it.media_type !== undefined ? it.media_type : "?"}] ${title}`;
-          })
-          .join("\n");
-        this.setStatus(
-          `该层级没有解析到子文件夹（${this.browseKbName} / ${this.currentBrowsePathName()}）。\n` +
-            `调试：返回字段=[${diag.keys}]，原始条目数=${diag.rawCount}，首条字段=[${diag.sampleKeys}]。\n` +
-            (listing ? `本层条目（前 12 条）：\n${listing}\n` : "") +
-            `若上面全是 📄文件、没有 📁文件夹，说明该知识库根目录确实没有子文件夹。`,
-        );
+        this.setStatus(this.folderDiagnosticText(result.diag));
       }
     } catch (err) {
       this.setStatus(`加载文件夹失败：${err.message || err}`);
@@ -473,13 +360,15 @@ var IMAZoteroSyncPrefs = {
   },
 
   async runPluginCommand(method, options) {
+    const bridge = this.requireBridge();
+    if (!bridge) return;
     try {
-      if (!Zotero.IMAZoteroSync || typeof Zotero.IMAZoteroSync[method] !== "function") {
-        throw new Error("IMA Zotero 同步命令桥不可用。请重启 Zotero 后再试。");
+      if (typeof bridge[method] !== "function") {
+        throw new Error(`命令不可用：${method}。请重启 Zotero 后再试。`);
       }
       this.saveCredentials();
       this.setStatus("正在执行 Zotero 同步命令...");
-      await Zotero.IMAZoteroSync[method](options || {});
+      await bridge[method](options || {});
       this.setStatus("Zotero 同步命令已完成。");
     } catch (err) {
       this.setStatus(`Zotero 同步命令失败：${err.message || err}`);
