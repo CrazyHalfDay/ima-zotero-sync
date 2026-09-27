@@ -4,7 +4,9 @@ var IMAZoteroSync;
   const PLUGIN_ID = "ima-zotero-sync@github.com.zhaox";
   const PREF = "extensions.imaZoteroSync.";
   const IMA_BASE_URL = "https://ima.qq.com";
-  const IMA_SKILL_VERSION = "zotero-plugin-0.2.18";
+  // 上报给 IMA 服务端的遥测版本号。优先用插件真实版本（bootstrap 传入的 data.version），
+  // 取不到时退回该常量；发版只需改 manifest.json。
+  const IMA_SKILL_VERSION_FALLBACK = "zotero-plugin-0.2.28";
   const SYNC_MARKER_BEGIN = "IMA-Zotero-Sync:";
   const SYNC_TAG = "IMA已上传";
   const SUPPORTED_FILES = {
@@ -111,7 +113,7 @@ var IMAZoteroSync;
       headers: {
         "ima-openapi-clientid": clientId,
         "ima-openapi-apikey": apiKey,
-        "ima-openapi-ctx": `skill_version=${IMA_SKILL_VERSION}`,
+        "ima-openapi-ctx": `skill_version=${skillVersion()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body || {}),
@@ -881,19 +883,48 @@ var IMAZoteroSync;
     return out;
   }
 
-  async function listFolders(kbId, folderId) {
+  // 原始条目列表（未过滤），仅用于诊断：解析不到子文件夹时告诉用户这一层到底有什么。
+  function extractRawItemList(data) {
+    const keys = ["knowledge_list", "folder_list", "list", "items", "info_list", "records", "results"];
+    for (const key of keys) {
+      if (Array.isArray(data[key])) return data[key];
+    }
+    if (data.data) {
+      for (const key of keys) {
+        if (Array.isArray(data.data[key])) return data.data[key];
+      }
+    }
+    return [];
+  }
+
+  // 列出某层级下的子文件夹。除 folders 外附带 diag（原始响应概要 + 前若干条条目），
+  // 供设置页在「解析不到子文件夹」时排查 IMA 返回结构变化。
+  async function listFoldersWithDiagnostics(kbId, folderId) {
     const folders = [];
+    const diag = { responseKeys: "", rawItemCount: 0, sampleKeys: "", items: [] };
     let cursor = "";
-    for (let page = 0; page < 20; page++) {
-      const body = { cursor, limit: 50, knowledge_base_id: kbId };
+    for (let page = 0; page < MAX_FOLDER_PAGES; page++) {
+      const body = { cursor, limit: FOLDER_PAGE_SIZE, knowledge_base_id: kbId };
       const normalized = normalizeFolderId(kbId, folderId);
       if (normalized) body.folder_id = normalized;
       const data = await imaPost("openapi/wiki/v1/get_knowledge_list", body);
+      const rawList = extractRawItemList(data);
+      if (rawList.length) {
+        diag.rawItemCount += rawList.length;
+        if (!diag.responseKeys) diag.responseKeys = Object.keys(data).join(", ") || "无";
+        if (!diag.sampleKeys) diag.sampleKeys = Object.keys(rawList[0] || {}).join(", ") || "无";
+        const room = DIAG_SAMPLE_LIMIT - diag.items.length;
+        if (room > 0) diag.items = diag.items.concat(rawList.slice(0, room));
+      }
       for (const folder of extractFolders(data)) folders.push(folder);
       if (data.is_end || !data.next_cursor) break;
       cursor = data.next_cursor;
     }
-    return folders;
+    return { folders, diag };
+  }
+
+  async function listFolders(kbId, folderId) {
+    return (await listFoldersWithDiagnostics(kbId, folderId)).folders;
   }
 
   // 让用户从知识库的顶层文件夹中选一个目标文件夹（0 = 根目录）。
@@ -1518,7 +1549,9 @@ var IMAZoteroSync;
     configureCredentials,
     runDiagnostics,
     listKnowledgeBases: () => listAddableKnowledgeBases(),
+    listVisibleKnowledgeBases: () => listVisibleKnowledgeBases(),
     listFolders: (kbId, folderId) => listFolders(kbId, folderId),
+    listFoldersWithDiagnostics: (kbId, folderId) => listFoldersWithDiagnostics(kbId, folderId),
     async testConnection() {
       await loadCredentials();
       const bases = await listAddableKnowledgeBases();
