@@ -4,7 +4,9 @@ var IMAZoteroSync;
   const PLUGIN_ID = "ima-zotero-sync@github.com.zhaox";
   const PREF = "extensions.imaZoteroSync.";
   const IMA_BASE_URL = "https://ima.qq.com";
-  const IMA_SKILL_VERSION = "zotero-plugin-0.2.18";
+  // 上报给 IMA 服务端的遥测版本号。优先用插件真实版本（bootstrap 传入的 data.version），
+  // 取不到时退回该常量；发版只需改 manifest.json。
+  const IMA_SKILL_VERSION_FALLBACK = "zotero-plugin-0.2.28";
   const SYNC_MARKER_BEGIN = "IMA-Zotero-Sync:";
   const SYNC_TAG = "IMA已上传";
   const SUPPORTED_FILES = {
@@ -37,12 +39,20 @@ var IMAZoteroSync;
     wav: { mediaType: 15, contentType: "audio/wav", maxBytes: 200 * 1024 * 1024 },
   };
 
-  let registeredMenus = [];
+  const KB_LIST_LIMIT = 20;
+  const FOLDER_PAGE_SIZE = 50;
+  const MAX_FOLDER_PAGES = 20;
+  const DIAG_SAMPLE_LIMIT = 12;
+
   let preferencePaneRegistered = false;
-  let legacyMenusEnabled = true;
   let currentWindow = null;
   let addonRootURI = "";
-  const activeSyncKeys = new Set();
+  let pluginVersion = "";
+
+  // 上报给 IMA 的 skill_version：优先插件真实版本，缺失时用常量兜底。
+  function skillVersion() {
+    return pluginVersion ? `zotero-plugin-${pluginVersion}` : IMA_SKILL_VERSION_FALLBACK;
+  }
 
   function prefGet(name, fallback = "") {
     try {
@@ -111,7 +121,7 @@ var IMAZoteroSync;
       headers: {
         "ima-openapi-clientid": clientId,
         "ima-openapi-apikey": apiKey,
-        "ima-openapi-ctx": `skill_version=${IMA_SKILL_VERSION}`,
+        "ima-openapi-ctx": `skill_version=${skillVersion()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body || {}),
@@ -765,53 +775,58 @@ var IMAZoteroSync;
       return { status: "skipped", title: item ? item.getField("title") : "", reason: "not a regular item" };
     }
     const payload = await itemPayload(item);
-    const syncKey = `${kb.id}:${payload.libraryID}:${payload.itemKey}:${payload.syncHash}`;
-    if (activeSyncKeys.has(syncKey)) {
-      return { status: "skipped", title: payload.title || item.key, reason: "sync already running" };
-    }
-    activeSyncKeys.add(syncKey);
-    try {
-      const existing = findSyncRecord(item, kb.id);
-      if (existing && existing.syncHash === payload.syncHash) {
-        await addSyncTag(item);
-        return { status: "skipped", title: payload.title || item.key, reason: "unchanged" };
-      }
-
-      const files = await getAttachmentFiles(item);
-      if (!files.length) {
-        return { status: "skipped", title: payload.title || item.key, reason: "no supported local attachments" };
-      }
-
-      const uploaded = [];
-      for (const file of files) {
-        uploaded.push(await uploadFileToKnowledgeBase(file, kb.id, kb.folderId));
-      }
-
-      await writeSyncRecord(item, {
-        kbId: kb.id,
-        kbName: kb.name,
-        folderId: kb.folderId || "",
-        folderName: kb.folderName || "",
-        syncHash: payload.syncHash,
-        syncedAt: new Date().toISOString(),
-        uploadedFiles: uploaded.map((u) => ({ fileName: u.fileName, mediaId: u.mediaId || "", skipped: !!u.skipped })),
-      });
+    const existing = findSyncRecord(item, kb.id);
+    if (existing && existing.syncHash === payload.syncHash) {
       await addSyncTag(item);
-
-      return { status: "synced", title: payload.title || item.key, uploaded };
-    } finally {
-      activeSyncKeys.delete(syncKey);
+      return { status: "skipped", title: payload.title || item.key, reason: "unchanged" };
     }
+
+    const files = await getAttachmentFiles(item);
+    if (!files.length) {
+      return { status: "skipped", title: payload.title || item.key, reason: "no supported local attachments" };
+    }
+
+    const uploaded = [];
+    for (const file of files) {
+      uploaded.push(await uploadFileToKnowledgeBase(file, kb.id, kb.folderId));
+    }
+
+    await writeSyncRecord(item, {
+      kbId: kb.id,
+      kbName: kb.name,
+      folderId: kb.folderId || "",
+      folderName: kb.folderName || "",
+      syncHash: payload.syncHash,
+      syncedAt: new Date().toISOString(),
+      uploadedFiles: uploaded.map((u) => ({ fileName: u.fileName, mediaId: u.mediaId || "", skipped: !!u.skipped })),
+    });
+    await addSyncTag(item);
+
+    return { status: "synced", title: payload.title || item.key, uploaded };
   }
 
+  // IMA 各接口返回的知识库字段名不统一，统一在这里收敛成 { id, name, type, contentCount }。
+  function normalizeKnowledgeBases(data) {
+    return extractKnowledgeBases(data)
+      .map((kb) => ({
+        id: kb.kb_id || kb.id || kb.knowledge_base_id || kb.knowledgeBaseId || kb.base_id || kb.baseId,
+        name: kb.kb_name || kb.name || kb.title || kb.knowledge_base_name || kb.knowledgeBaseName || kb.base_name || kb.baseName || "未命名知识库",
+        type: kb.base_type || kb.type || kb.knowledge_base_type || kb.knowledgeBaseType || "",
+        contentCount: kb.content_count || kb.contentCount || kb.doc_count || kb.docCount || kb.knowledge_count || kb.knowledgeCount || "",
+      }))
+      .filter((kb) => kb.id);
+  }
+
+  // 可写入的知识库（唯一能作为同步目标的集合）。
   async function listAddableKnowledgeBases() {
-    const data = await imaPost("openapi/wiki/v1/get_addable_knowledge_base_list", { cursor: "", limit: 20 });
-    const list = extractKnowledgeBases(data);
-    return list.map((kb) => ({
-      id: kb.kb_id || kb.id || kb.knowledge_base_id || kb.knowledgeBaseId || kb.base_id || kb.baseId,
-      name: kb.kb_name || kb.name || kb.title || kb.knowledge_base_name || kb.knowledgeBaseName || kb.base_name || kb.baseName || "未命名知识库",
-      type: kb.base_type || kb.type || kb.knowledge_base_type || kb.knowledgeBaseType || "",
-    })).filter((kb) => kb.id);
+    const data = await imaPost("openapi/wiki/v1/get_addable_knowledge_base_list", { cursor: "", limit: KB_LIST_LIMIT });
+    return normalizeKnowledgeBases(data);
+  }
+
+  // 可见/共享的知识库（prefs 页用于查看，同步仍需写入权限）。
+  async function listVisibleKnowledgeBases() {
+    const data = await imaPost("openapi/wiki/v1/search_knowledge_base", { query: "", cursor: "", limit: KB_LIST_LIMIT });
+    return normalizeKnowledgeBases(data);
   }
 
   function extractKnowledgeBases(data) {
@@ -881,19 +896,48 @@ var IMAZoteroSync;
     return out;
   }
 
-  async function listFolders(kbId, folderId) {
+  // 原始条目列表（未过滤），仅用于诊断：解析不到子文件夹时告诉用户这一层到底有什么。
+  function extractRawItemList(data) {
+    const keys = ["knowledge_list", "folder_list", "list", "items", "info_list", "records", "results"];
+    for (const key of keys) {
+      if (Array.isArray(data[key])) return data[key];
+    }
+    if (data.data) {
+      for (const key of keys) {
+        if (Array.isArray(data.data[key])) return data.data[key];
+      }
+    }
+    return [];
+  }
+
+  // 列出某层级下的子文件夹。除 folders 外附带 diag（原始响应概要 + 前若干条条目），
+  // 供设置页在「解析不到子文件夹」时排查 IMA 返回结构变化。
+  async function listFoldersWithDiagnostics(kbId, folderId) {
     const folders = [];
+    const diag = { responseKeys: "", rawItemCount: 0, sampleKeys: "", items: [] };
     let cursor = "";
-    for (let page = 0; page < 20; page++) {
-      const body = { cursor, limit: 50, knowledge_base_id: kbId };
+    for (let page = 0; page < MAX_FOLDER_PAGES; page++) {
+      const body = { cursor, limit: FOLDER_PAGE_SIZE, knowledge_base_id: kbId };
       const normalized = normalizeFolderId(kbId, folderId);
       if (normalized) body.folder_id = normalized;
       const data = await imaPost("openapi/wiki/v1/get_knowledge_list", body);
+      const rawList = extractRawItemList(data);
+      if (rawList.length) {
+        diag.rawItemCount += rawList.length;
+        if (!diag.responseKeys) diag.responseKeys = Object.keys(data).join(", ") || "无";
+        if (!diag.sampleKeys) diag.sampleKeys = Object.keys(rawList[0] || {}).join(", ") || "无";
+        const room = DIAG_SAMPLE_LIMIT - diag.items.length;
+        if (room > 0) diag.items = diag.items.concat(rawList.slice(0, room));
+      }
       for (const folder of extractFolders(data)) folders.push(folder);
       if (data.is_end || !data.next_cursor) break;
       cursor = data.next_cursor;
     }
-    return folders;
+    return { folders, diag };
+  }
+
+  async function listFolders(kbId, folderId) {
+    return (await listFoldersWithDiagnostics(kbId, folderId)).folders;
   }
 
   // 让用户从知识库的顶层文件夹中选一个目标文件夹（0 = 根目录）。
@@ -1141,7 +1185,6 @@ var IMAZoteroSync;
       {
         unchanged: "未变化",
         exists: "远端已存在",
-        "sync already running": "同步正在运行",
         "no supported local attachments": "没有可上传的本地附件",
         "not a regular item": "不是普通文献条目",
       }[reason] || reason
@@ -1155,20 +1198,6 @@ var IMAZoteroSync;
   async function dryRunSelectedFromActiveWindow(options = {}) {
     const win = getActiveMainWindow();
     await dryRunSelectedItems(win, options);
-  }
-
-  async function syncMenuManagerContext(context, event, options = {}) {
-    const win =
-      (event && event.target && event.target.ownerGlobal) ||
-      (context && context.window) ||
-      currentWindow ||
-      Services.wm.getMostRecentWindow("navigator:browser");
-    const items = context && context.items ? Array.from(context.items) : selectedItemsFromWindow(win);
-    if (options.dryRun) {
-      await dryRunItems(items, win, options);
-    } else {
-      await syncItems(items, win, options);
-    }
   }
 
   async function configureCredentials() {
@@ -1212,7 +1241,7 @@ var IMAZoteroSync;
           `可写入知识库：${bases.length}`,
           `默认知识库：${defaultName}`,
           `默认文件夹：${defaultFolder}`,
-          `菜单模式：${legacyMenusEnabled ? "传统 XUL 备用菜单" : "Zotero MenuManager"}`,
+          "菜单模式：静态 XUL 注入",
         ].join("\n"),
       );
     } catch (err) {
@@ -1240,118 +1269,6 @@ var IMAZoteroSync;
       if (node) return node;
     }
     return null;
-  }
-
-  async function registerOneMenu(definition) {
-    const id = Zotero.MenuManager.registerMenu(definition);
-    return id && typeof id.then === "function" ? await id : id;
-  }
-
-  function buildSyncMenuEntries() {
-    return [
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-dry-run",
-        label: "预演同步所选文献",
-        onCommand: (event, context) => syncMenuManagerContext(context, event, { forcePrompt: true, dryRun: true }),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-sync-default",
-        label: "同步所选文献到默认知识库",
-        onCommand: (event, context) => syncMenuManagerContext(context, event),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-sync-chosen",
-        label: "同步所选文献到指定知识库...",
-        onCommand: (event, context) => syncMenuManagerContext(context, event, { forcePrompt: true }),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-default-kb",
-        label: "选择默认 IMA 知识库",
-        onCommand: () => configureTargetKnowledgeBase(),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-credentials",
-        label: "配置 IMA 凭据",
-        onCommand: () => configureCredentials(),
-      },
-      {
-        menuType: "menuitem",
-        l10nID: "ima-zotero-sync-menu-diagnostics",
-        label: "运行诊断",
-        onCommand: () => runDiagnostics(),
-      },
-    ];
-  }
-
-  async function registerMenuManagerMenus() {
-    if (!Zotero.MenuManager || !Zotero.MenuManager.registerMenu) {
-      return false;
-    }
-    try {
-      registeredMenus.push(
-        await registerOneMenu({
-          menuID: "ima-zotero-sync-tools-menu",
-          pluginID: PLUGIN_ID,
-          target: "main/menubar/tools",
-          menus: [
-            {
-              menuType: "submenu",
-              l10nID: "ima-zotero-sync-menu-root",
-              label: "IMA Zotero 同步",
-              menus: buildSyncMenuEntries(),
-            },
-          ],
-        }),
-      );
-
-      registeredMenus.push(
-        await registerOneMenu({
-          menuID: "ima-zotero-sync-item-menu",
-          pluginID: PLUGIN_ID,
-          target: "main/library/item",
-          menus: [
-            {
-              menuType: "submenu",
-              l10nID: "ima-zotero-sync-menu-root",
-              label: "IMA Zotero 同步",
-              menus: buildSyncMenuEntries(),
-            },
-          ],
-        }),
-      );
-
-      // MenuManager 管理菜单生命周期；此时必须关闭传统 XUL 菜单，
-      // 否则静态节点与 MenuManager 动态节点的 ID 冲突会破坏右键 popup
-      // （表现为右键只弹出一次，之后无法再弹出）。
-      legacyMenusEnabled = false;
-      Zotero.debug("IMA Zotero Sync: registered menus via Zotero.MenuManager");
-      return true;
-    } catch (err) {
-      unregisterMenuManagerMenus();
-      legacyMenusEnabled = true;
-      Zotero.debug(`IMA Zotero Sync: MenuManager registration failed, using legacy menus: ${err.stack || err.message}`);
-      return false;
-    }
-  }
-
-  function unregisterMenuManagerMenus() {
-    if (!Zotero.MenuManager || !Zotero.MenuManager.unregisterMenu) {
-      registeredMenus = [];
-      return;
-    }
-    for (const id of registeredMenus) {
-      try {
-        Zotero.MenuManager.unregisterMenu(id);
-      } catch (err) {
-        Zotero.debug(`IMA Zotero Sync: failed to unregister menu ${id}: ${err.message}`);
-      }
-    }
-    registeredMenus = [];
   }
 
   function registerPreferencePane(rootURI) {
@@ -1491,17 +1408,16 @@ var IMAZoteroSync;
   IMAZoteroSync = {
     async startup(data = {}) {
       addonRootURI = data.rootURI || "";
+      pluginVersion = data.version || "";
       Zotero.IMAZoteroSync = IMAZoteroSync;
       registerPreferencePane(data.rootURI || "");
-      // 统一使用静态 XUL 注入 + popupshowing 监听。
+      // 菜单统一走静态 XUL 注入 + popupshowing 幂等监听。
       // Zotero 9 的 MenuManager 在条目右键菜单上会出现空白项，且右键
       // 仅能弹出一次（拆除阶段异常导致 popup 卡死），故不再使用。
-      legacyMenusEnabled = true;
       addMenusToOpenWindows();
     },
     async shutdown() {
       unregisterPreferencePane();
-      unregisterMenuManagerMenus();
       for (const win of getMainWindows()) removeMenus(win);
       if (Zotero.IMAZoteroSync === IMAZoteroSync) {
         delete Zotero.IMAZoteroSync;
@@ -1518,7 +1434,9 @@ var IMAZoteroSync;
     configureCredentials,
     runDiagnostics,
     listKnowledgeBases: () => listAddableKnowledgeBases(),
+    listVisibleKnowledgeBases: () => listVisibleKnowledgeBases(),
     listFolders: (kbId, folderId) => listFolders(kbId, folderId),
+    listFoldersWithDiagnostics: (kbId, folderId) => listFoldersWithDiagnostics(kbId, folderId),
     async testConnection() {
       await loadCredentials();
       const bases = await listAddableKnowledgeBases();
@@ -1526,7 +1444,7 @@ var IMAZoteroSync;
     },
     onMainWindowLoad({ window }) {
       currentWindow = window;
-      if (legacyMenusEnabled) scheduleMenuInstall(window);
+      scheduleMenuInstall(window);
     },
     onMainWindowUnload({ window }) {
       removeMenus(window);
